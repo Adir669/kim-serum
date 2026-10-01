@@ -448,13 +448,48 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
   const STRATA = ['בזאלית', 'קוצנית', 'גרגירית', 'נוצצת', 'קרנית'];
 
   /* ---------------- storage (guarded: the page must work without it) ---------------- */
+  // Several copies of the page can be open at once (old Safari tabs, a tab restored from memory),
+  // each holding the progress it loaded. A save therefore merges with what is stored instead of
+  // overwriting it, so a stale copy can never erase answers made elsewhere.
   const KEY = 'kim-serum.v1';
+  let dayPend = {};        // today's counts recorded here and not yet written
+  let finishedId = null;   // the round this copy just finished, so a merge won't bring it back
   const store = {
-    load() { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } },
-    save() { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) { /* private mode: keep in memory */ } }
+    read() { try { const raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : {}; } catch (e) { return null; } },
+    load() { return store.read() || {}; },
+    save() {
+      const disk = store.read();
+      if (disk) merge(disk);
+      try { localStorage.setItem(KEY, JSON.stringify(DB)); dayPend = {}; } catch (e) { /* private mode: keep in memory */ }
+    }
   };
   const DB = Object.assign({ p: {}, d: {}, bm: [], hist: [], cur: null, pref: { simTimer: true, simFeedback: true, count: 20, filter: 'smart' } }, store.load());
   DB.pref = Object.assign({ simTimer: true, simFeedback: true, count: 20, filter: 'smart' }, DB.pref || {});
+
+  function merge(disk) {
+    // answers only ever grow: keep whichever copy has more of them
+    const p = disk.p || {};
+    for (const id in p) { const a = DB.p[id]; if (Array.isArray(p[id]) && (!a || p[id][0] > a[0])) DB.p[id] = p[id]; }
+    // day counts: what is stored plus what this copy added since its last write
+    const d = disk.d || {};
+    for (const k of new Set([...Object.keys(d), ...Object.keys(dayPend)])) {
+      const base = d[k] || [0, 0], add = dayPend[k] || [0, 0];
+      const both = [base[0] + add[0], base[1] + add[1]];
+      if (!DB.d[k] || both[0] > DB.d[k][0]) DB.d[k] = both;
+    }
+    if (Array.isArray(disk.hist)) {
+      const have = new Set(DB.hist.map(h => h.t));
+      DB.hist = DB.hist.concat(disk.hist.filter(h => h && !have.has(h.t))).sort((a, b) => b.t - a.t).slice(0, 60);
+    }
+    if (Array.isArray(disk.bm) && (disk.bmT || 0) > (DB.bmT || 0)) { DB.bm = disk.bm; DB.bmT = disk.bmT; }
+    // open round: the one running here wins; otherwise keep the newest one stored
+    const dc = disk.cur && !disk.cur.done && disk.cur.id !== finishedId ? disk.cur : null;
+    if (dc) {
+      const mine = DB.cur, quiz = S.route === 'quiz';
+      if (!mine || (!quiz && (dc.id > mine.id || (dc.id === mine.id && dc.idx > mine.idx)))) DB.cur = dc;
+      if (!quiz && DB.cur === dc) S.session = dc;
+    }
+  }
 
   const todayKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
   // p[id] = [answered, correct, last(0|1), streak]
@@ -470,6 +505,7 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
     p[0] += 1; if (ok) p[1] += 1; p[2] = ok ? 1 : 0; p[3] = ok ? p[3] + 1 : 0;
     DB.p[id] = p;
     const k = todayKey(); const d = DB.d[k] || [0, 0]; d[0] += 1; if (ok) d[1] += 1; DB.d[k] = d;
+    const pd = dayPend[k] || [0, 0]; pd[0] += 1; if (ok) pd[1] += 1; dayPend[k] = pd;
     store.save();
   }
   function totals(ids) {
@@ -870,7 +906,7 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
   function finish() {
     const s = S.session; if (!s) return;
     if (s.exam) { Object.entries(s.ans).forEach(([id, a]) => record(id, a[1])); }
-    s.done = true; s.ended = Date.now();
+    s.done = true; s.ended = Date.now(); finishedId = s.id;
     const answered = Object.keys(s.ans).length;
     const correct = Object.values(s.ans).filter(a => a[1]).length;
     DB.hist.unshift({ t: s.ended, mode: s.mode, title: s.title, src: s.src, n: s.qids.length, a: answered, c: correct, dur: s.ended - s.started });
@@ -1059,7 +1095,7 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
     bm: el => {
       const id = curQ().i; const i = DB.bm.indexOf(id);
       if (i >= 0) { DB.bm.splice(i, 1); toast('הוסרה מהשמורות'); } else { DB.bm.push(id); toast('נשמרה לחזרה'); }
-      store.save(); el.setAttribute('aria-pressed', String(i < 0)); el.setAttribute('aria-label', i < 0 ? 'הסרה מהשמורות' : 'שמירה לחזרה');
+      DB.bmT = Date.now(); store.save(); el.setAttribute('aria-pressed', String(i < 0)); el.setAttribute('aria-label', i < 0 ? 'הסרה מהשמורות' : 'שמירה לחזרה');
     },
     'why-all': el => whyAll(el),
     ask: el => askMore(el),
@@ -1133,6 +1169,19 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
       box.classList.remove('is-thinking');
     } finally { btn.disabled = false; }
   }
+
+  /* ---------------- keep open copies in step ---------------- */
+  // Another tab saved, or this one came back to the front: pull in what is stored and refresh
+  // the progress screens. A question in progress is never re-rendered.
+  const sig = () => { let n = 0; for (const id in DB.p) n += DB.p[id][0]; return `${n}|${DB.bm.length}|${S.session ? S.session.id + ':' + S.session.idx : ''}`; };
+  function sync() {
+    const disk = store.read(); if (!disk) return;
+    const before = sig(); merge(disk);
+    if (sig() !== before && ['home', 'topics', 'exams'].includes(S.route)) rerender();
+  }
+  window.addEventListener('storage', e => { if (e.key === KEY || e.key === null) sync(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) sync(); });
+  window.addEventListener('pageshow', e => { if (e.persisted) sync(); });
 
   /* ---------------- boot ---------------- */
   // After a republish the viewer reloads the page; return to the question in progress instead of home.
