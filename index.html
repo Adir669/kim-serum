@@ -963,7 +963,7 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
           <div><dt>טעויות שתיקנת</dt><dd>${fmt(fixed)}</dd></div>
           <div><dt>טעויות חדשות</dt><dd>${fmt(added)}</dd></div>
         </dl>
-        <p>${open ? `ברשימת הטעויות נשארו עכשיו <b>${qn(open)}</b>.` : 'רשימת הטעויות ריקה.'} שאלה יוצאת מהרשימה כשעונים נכון על שאלה שטעית בה קודם. תשובה נכונה על שאלה חדשה נספרת בשאלות שענית עליהן, ולא מורידה מהרשימה.</p>
+        <p>עד עכשיו ענית על <b>${fmt(totals(BANK_IDS).seen)} מתוך ${fmt(BANK_IDS.length)}</b> שאלות, והמספר הזה רק עולה. ${open ? `ברשימת הטעויות נשארו <b>${qn(open)}</b>. שאלה יוצאת ממנה כשעונים נכון על שאלה שטעית בה קודם, ולכן הרשימה הזו יורדת.` : 'רשימת הטעויות ריקה.'}</p>
         ${open ? `<button class="link-btn" data-act="mistakes">לחזרה על הטעויות בלבד</button>` : ''}
       </section>` : '';
     return `
