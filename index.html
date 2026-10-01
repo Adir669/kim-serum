@@ -321,6 +321,12 @@ h1, h2, h3 { margin: 0; }
 .score-card h2 { font-family: var(--font-display); font-weight: 700; font-size: 22px; margin-block-start: 6px; text-wrap: balance; }
 .score-card p { margin: 0; color: var(--ink-2); }
 .actions { display: grid; gap: 10px; margin-block: 18px 6px; }
+.delta { padding: 20px 20px 18px; margin-block-start: 14px; display: grid; gap: 12px; }
+.delta h2 { font-family: var(--font-display); font-weight: 700; font-size: 17px; margin: 0; }
+.delta .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); padding-block-start: 12px; }
+.delta p { margin: 0; font-size: 14.5px; color: var(--ink-2); }
+.delta p b { color: var(--ink); font-weight: 700; }
+.delta .link-btn { justify-self: start; }
 .brk { display: grid; gap: 10px; }
 .brk-row { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; font-size: 15px; }
 .brk-row .bar { grid-column: 1 / -1; height: 6px; border-radius: 999px; background: var(--bg-deep); overflow: hidden; }
@@ -821,7 +827,7 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
       return;
     }
     const ok = i === q.a;
-    s.ans[q.i] = [i, ok, Date.now() - s.started];
+    s.ans[q.i] = [i, ok, Date.now() - s.started, status(q.i)];
     record(q.i, ok);
     DB.cur = s; store.save();
     showResult(i, ev, false);
@@ -905,7 +911,7 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
 
   function finish() {
     const s = S.session; if (!s) return;
-    if (s.exam) { Object.entries(s.ans).forEach(([id, a]) => record(id, a[1])); }
+    if (s.exam) { Object.entries(s.ans).forEach(([id, a]) => { a[3] = status(id); record(id, a[1]); }); }
     s.done = true; s.ended = Date.now(); finishedId = s.id;
     const answered = Object.keys(s.ans).length;
     const correct = Object.values(s.ans).filter(a => a[1]).length;
@@ -943,6 +949,23 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
     };
     const skipped = ids.filter(id => !s.ans[id]);
     const missed = wrong.concat(skipped);
+    // what the round moved: a right answer takes a question off the mistakes list only if it was on it
+    const before = answered.map(id => s.ans[id]).filter(a => a[3]);
+    const fresh = before.filter(a => a[3] === 'new').length;
+    const fixed = before.filter(a => a[3] === 'wrong' && a[1]).length;
+    const added = before.filter(a => a[3] !== 'wrong' && !a[1]).length;
+    const open = wrongIds().length;
+    const delta = before.length ? `
+      <section class="card delta" aria-label="מה הסבב הזה שינה">
+        <h2>מה הסבב הזה שינה</h2>
+        <dl class="stats">
+          <div><dt>שאלות חדשות</dt><dd>${fmt(fresh)}</dd></div>
+          <div><dt>טעויות שתיקנת</dt><dd>${fmt(fixed)}</dd></div>
+          <div><dt>טעויות חדשות</dt><dd>${fmt(added)}</dd></div>
+        </dl>
+        <p>${open ? `ברשימת הטעויות נשארו עכשיו <b>${qn(open)}</b>.` : 'רשימת הטעויות ריקה.'} שאלה יוצאת מהרשימה כשעונים נכון על שאלה שטעית בה קודם. תשובה נכונה על שאלה חדשה נספרת בשאלות שענית עליהן, ולא מורידה מהרשימה.</p>
+        ${open ? `<button class="link-btn" data-act="mistakes">לחזרה על הטעויות בלבד</button>` : ''}
+      </section>` : '';
     return `
       <header class="subbar"><button class="icon-btn" data-act="home" aria-label="לדף הבית">${icon('back')}</button><h1>סיכום הסבב</h1></header>
       <section class="card score-card" style="margin-block-start:10px">
@@ -953,6 +976,7 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
         <h2>${headline}</h2>
         <p>${esc(s.title)} · ${mins} דק׳${skipped.length ? ` · ${skipped.length} דילוגים` : ''}</p>
       </section>
+      ${delta}
       <div class="actions">
         ${missed.length ? `<button class="btn primary" data-act="retry-missed">${icon('redo')}לתרגל שוב את ${missed.length === 1 ? 'השאלה שפספסת' : `${missed.length} השאלות שפספסת`}</button>` : ''}
         <button class="btn ${missed.length ? 'secondary' : 'primary'}" data-act="again">${icon('play')}סבב חדש</button>
