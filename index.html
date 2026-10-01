@@ -326,7 +326,7 @@ h1, h2, h3 { margin: 0; }
 .delta .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); padding-block-start: 12px; }
 .delta p { margin: 0; font-size: 14.5px; color: var(--ink-2); }
 .delta p b { color: var(--ink); font-weight: 700; }
-.delta .link-btn { justify-self: start; }
+.delta-links { display: flex; flex-wrap: wrap; gap: 2px 20px; }
 .brk { display: grid; gap: 10px; }
 .brk-row { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; font-size: 15px; }
 .brk-row .bar { grid-column: 1 / -1; height: 6px; border-radius: 999px; background: var(--bg-deep); overflow: hidden; }
@@ -695,6 +695,7 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
             <span class="go">${icon('chev')}</span>
           </button>` : ''}
         <button class="btn primary block" data-act="smart">${icon('play')}<span>תרגול חכם · ${DB.pref.count} שאלות</span></button>
+        ${all.seen && remaining ? `<button class="btn secondary block" data-act="fresh">${icon('sparkles')}<span>שאלות שעוד לא ראית · נשארו ${fmt(remaining)}</span></button>` : ''}
       </div>
 
       ${WEEK_IDS.length ? `
@@ -955,6 +956,7 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
     const fixed = before.filter(a => a[3] === 'wrong' && a[1]).length;
     const added = before.filter(a => a[3] !== 'wrong' && !a[1]).length;
     const open = wrongIds().length;
+    const seenAll = totals(BANK_IDS).seen, unseen = BANK_IDS.length - seenAll;
     const delta = before.length ? `
       <section class="card delta" aria-label="מה הסבב הזה שינה">
         <h2>מה הסבב הזה שינה</h2>
@@ -963,8 +965,8 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
           <div><dt>טעויות שתיקנת</dt><dd>${fmt(fixed)}</dd></div>
           <div><dt>טעויות חדשות</dt><dd>${fmt(added)}</dd></div>
         </dl>
-        <p>עד עכשיו ענית על <b>${fmt(totals(BANK_IDS).seen)} מתוך ${fmt(BANK_IDS.length)}</b> שאלות, והמספר הזה רק עולה. ${open ? `ברשימת הטעויות נשארו <b>${qn(open)}</b>. שאלה יוצאת ממנה כשעונים נכון על שאלה שטעית בה קודם, ולכן הרשימה הזו יורדת.` : 'רשימת הטעויות ריקה.'}</p>
-        ${open ? `<button class="link-btn" data-act="mistakes">לחזרה על הטעויות בלבד</button>` : ''}
+        <p>ענית עד עכשיו על <b>${fmt(seenAll)} מתוך ${fmt(BANK_IDS.length)}</b> שאלות${unseen ? `, ונשארו <b>${qn(unseen)}</b> שעוד לא ראית` : '. עברת על כל המאגר'}.${unseen && fresh < before.length ? ` בתרגול חכם חלק מהשאלות הן חזרה על מה שכבר ראית, ולכן ${fresh === 0 ? 'בסבב הזה לא נוספו שאלות חדשות' : fresh === 1 ? `בסבב הזה נוספה שאלה חדשה אחת ולא ${fmt(before.length)}` : `בסבב הזה נוספו ${fmt(fresh)} חדשות ולא ${fmt(before.length)}`}. כדי לסיים את המאגר, הכי מהיר: ״רק שאלות שעוד לא ראית״.` : ''}${open ? ` ברשימת הטעויות: <b>${qn(open)}</b>.` : ''}</p>
+        ${unseen || open ? `<div class="delta-links">${unseen ? `<button class="link-btn" data-act="fresh">רק שאלות שעוד לא ראית</button>` : ''}${open ? `<button class="link-btn" data-act="mistakes">רק הטעויות</button>` : ''}</div>` : ''}
       </section>` : '';
     return `
       <header class="subbar"><button class="icon-btn" data-act="home" aria-label="לדף הבית">${icon('back')}</button><h1>סיכום הסבב</h1></header>
@@ -1091,6 +1093,7 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
     smart: () => startSession({ mode: 'smart', title: 'תרגול חכם', qids: pickWeighted(BANK_IDS, DB.pref.count) }),
     week: () => startSession({ mode: 'week', title: 'מבחן השבוע', qids: WEEK_IDS.slice() }),
     hot: () => startSession({ mode: 'hot', title: 'שאלות חמות', qids: pickWeighted(HOT_IDS, DB.pref.count, id => W[status(id)] * (byId.get(id).wk ? 3 : 1) * Math.min(4, byId.get(id).h || 1)) }),
+    fresh: () => { const ids = BANK_IDS.filter(id => status(id) === 'new'); if (!ids.length) { toast('ענית על כל השאלות במאגר. כל הכבוד!'); return; } startSession({ mode: 'new', title: 'שאלות שעוד לא ראית', qids: shuffle(ids).slice(0, DB.pref.count) }); },
     mistakes: () => { const ids = wrongIds(); if (!ids.length) { toast('אין טעויות פתוחות. כל הכבוד!'); return; } startSession({ mode: 'mistakes', title: 'חזרה על טעויות', qids: shuffle(ids).slice(0, 30) }); },
     bookmarks: () => { const ids = DB.bm.filter(id => byId.has(id)); if (!ids.length) { toast('עוד לא שמרת שאלות. אפשר לשמור עם הסימנייה בזמן תרגול'); return; } startSession({ mode: 'bm', title: 'שאלות שמורות', qids: shuffle(ids) }); },
     'open-topics': () => { S.picks = S.picks || new Set(); go('topics'); },
@@ -1130,6 +1133,7 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
       if (s.mode === 'week') return ACT.week();
       if (s.mode === 'source') return startSession({ mode: 'source', title: s.title, qids: s.qids, src: s.src });
       if (s.mode === 'hot') return ACT.hot();
+      if (s.mode === 'new') return ACT.fresh();
       startSession({ mode: 'smart', title: 'תרגול חכם', qids: pickWeighted(BANK_IDS, DB.pref.count) });
     },
     'search-practice': () => { const ids = searchIds(S.search); startSession({ mode: 'search', title: `חיפוש: ${S.search.trim()}`, qids: shuffle(ids).slice(0, 40) }); }
