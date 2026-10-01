@@ -449,6 +449,9 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
 .lib-art i:nth-child(3)::before { inset-block-start: 26px; }
 .lib-art i:nth-child(3)::after { inset-block-start: 35px; inset-inline-end: 22px; }
 
+.lib-progress { display: grid; gap: 10px; margin-block: -6px 16px; padding: 14px 16px; border-radius: var(--r-lg); background: var(--surface); border: 1px solid var(--line); }
+.lib-progress > span { font-size: 15px; color: var(--ink-2); }
+.lib-progress b { color: var(--ink); font-weight: 700; }
 .lmodes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .lmode { display: grid; align-content: start; gap: 4px; min-height: 118px; padding: 16px; border-radius: var(--r-lg); background: var(--surface); border: 1px solid var(--line); text-align: start; transition: transform .2s var(--ease-out), box-shadow .2s var(--ease-soft), border-color .2s; }
 .lmode:hover { transform: translateY(-2px); box-shadow: var(--shadow); border-color: var(--line-strong); }
@@ -716,19 +719,35 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
     r.cf = r.nc ? r.kc / r.nc : 0; r.qf = r.nq ? r.mq / r.nq : 0;
     return r;
   }
-  // a lecture's questions: everything, the ones she needs most first; a wider pool: a weighted sample
+  // Coverage first (Kim asked for this on the exam bank): every round brings what she hasn't seen yet, about a
+  // quarter of the seats go back to her mistakes, and what she already knows returns only when nothing new is left.
+  function coverQs(pool, n) {
+    const by = { wrong: [], new: [], learning: [], mastered: [] };
+    shuffle(pool).forEach(id => by[status(id)].push(id));
+    const nW = Math.min(by.wrong.length, Math.ceil(n / 4));
+    return shuffle(by.wrong.slice(0, nW).concat(by.new, by.wrong.slice(nW), by.learning, by.mastered).slice(0, n));
+  }
+  function coverCards(pool, n) {
+    const t = lday(); const by = { again: [], new: [], due: [], rest: [] };
+    shuffle(pool).forEach(id => { const s = cstate(id); by[s === 'known' ? (DB.fc[id][1] <= t ? 'due' : 'rest') : s].push(id); });
+    const nA = Math.min(by.again.length, Math.ceil(n / 4));
+    return shuffle(by.again.slice(0, nA).concat(by.new, by.again.slice(nA), by.due, by.rest).slice(0, n));
+  }
+  // one lecture: only what she hasn't mastered yet, mistakes first; the whole lecture again once all of it is mastered
   function lecQuestions(lids, n) {
     const pool = lecPool(lids);
-    if (n) return pickWeighted(pool, n);
+    if (n) return coverQs(pool, n);
     const rank = { wrong: 0, new: 1, learning: 2, mastered: 3 };
-    return pool.map(id => ({ id, k: rank[status(id)] + Math.random() * .9 })).sort((a, b) => a.k - b.k).map(x => x.id);
+    const open = pool.filter(id => status(id) !== 'mastered');
+    return (open.length ? open : pool).map(id => ({ id, k: rank[status(id)] + Math.random() * .9 })).sort((a, b) => a.k - b.k).map(x => x.id);
   }
-  // a lecture's cards: in the lecture's own order while some are new, then the ones she missed first
+  // one lecture: in the lecture's own order, without cards she knows that aren't due yet; all of them once none is left
   function lecCards(lids, n) {
     const pool = cardPool(lids);
-    if (n) return pickWeighted(pool, n, cardWeight);
-    if (pool.some(id => cstate(id) === 'new')) return pool;
-    return pool.map(id => ({ id, k: (cstate(id) === 'again' ? 0 : 1) + Math.random() * .9 })).sort((a, b) => a.k - b.k).map(x => x.id);
+    if (n) return coverCards(pool, n);
+    const t = lday();
+    const open = pool.filter(id => cstate(id) !== 'known' || DB.fc[id][1] <= t);
+    return open.length ? open : pool;
   }
   function restoreCards() {
     const c = DB.ccur;
@@ -1225,7 +1244,7 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
     const scopeIds = scope || BANK_IDS;
     const open = scope ? scope.filter(id => status(id) === 'wrong').length : wrongIds().length;
     const seenAll = totals(scopeIds).seen, unseen = scopeIds.length - seenAll;
-    const where = !scope ? 'שאלות' : s.lids.length === 1 ? 'השאלות של ההרצאה' : 'השאלות שבחרת מההרצאות';
+    const where = !scope ? 'שאלות' : s.lids.length === 1 ? 'השאלות של ההרצאה' : s.mode === 'lnew' ? 'השאלות מההרצאות' : s.mode === 'lt' ? 'השאלות של הנושא' : 'השאלות שבחרת מההרצאות';
     const mockDelta = s.mode === 'mock' ? (() => {
       const m = mockStats();
       const part = lx => { const ids = answered.filter(id => !!byId.get(id).lx === lx); return [ids.filter(id => s.ans[id][1]).length, ids.length]; };
@@ -1433,6 +1452,8 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
     return `
       <header class="subbar"><button class="icon-btn" data-act="home" aria-label="לדף הבית">${icon('back')}</button><h1>לומדים מההרצאות</h1></header>
       <p class="page-intro">כל המצגות וההרצאות שלך, לפי נושא. בכל הרצאה: עיקרים לקריאה, כרטיסיות לשינון ושאלות כמו במבחן, עם הסבר לכל תשובה.</p>
+      ${(() => { const pool = lecPool(poolLids([])); const seen = pool.filter(id => DB.p[id]).length; const left = pool.length - seen;
+        return `<div class="lib-progress"><span>ענית על <b>${fmt(seen)} מתוך ${fmt(pool.length)}</b> שאלות מההרצאות${left ? ` · עוד <b>${fmt(left)}</b> שלא ראית` : ' · עברת על כולן'}</span>${left ? `<button class="btn secondary block" data-act="l-new-all">${icon('sparkles')}שאלות שעוד לא ראית · ${fmt(Math.min(DB.pref.count, left))}</button>` : ''}</div>`; })()}
       ${cs ? `<button class="resume" data-act="cards-resume" style="margin-block-end:12px">${ring(pct(cs.idx, cs.ids.length))}<span class="t"><b>המשך סבב כרטיסיות</b><span>${esc(cs.title)} · ${cs.idx + 1} מתוך ${cs.ids.length}</span></span><span class="go">${icon('chev')}</span></button>` : ''}
       <div class="lmodes">
         <button class="lmode wide${due ? '' : ' is-empty'}" data-act="due"><span class="ic">${icon('timer')}</span><span class="t"><b>חזרה מרווחת</b><span>${due ? 'כרטיסיות שהגיע הזמן לחזור עליהן, רגע לפני שיישכחו' : 'אין היום כרטיסיות לחזרה. כל כרטיסייה שתלמדי תחזור אלייך בזמן הנכון.'}</span></span>${due ? `<span class="count">${fmt(due)}</span>` : ''}</button>
@@ -1449,7 +1470,7 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
     const t = S.lt; const lids = lecturesOf(t); const skipAll = lids.every(isSkipped);
     const rows = lids.map(lid => {
       const l = LEC_BY.get(lid); const st = lecStats([lid]); const sk = isSkipped(lid);
-      return `<button class="lrow${sk ? ' is-skip' : ''}" data-act="lec" data-l="${lid}"><b>${esc(l.n)}</b><span class="meta">${sk ? '<em class="skip-tag">בדילוג</em> ' : ''}${l.by ? `${esc(l.by)} · ` : ''}${st.nc ? `${cn(st.nc)} · ` : ''}${qn(st.nq)}</span><span class="go">${icon('chev')}</span>${bar2(st)}</button>`;
+      return `<button class="lrow${sk ? ' is-skip' : ''}" data-act="lec" data-l="${lid}"><b>${esc(l.n)}</b><span class="meta">${sk ? '<em class="skip-tag">בדילוג</em> ' : ''}${l.by ? `${esc(l.by)} · ` : ''}${st.nc ? `${cn(st.nc)} · ` : ''}${qn(st.nq)}${st.sq ? ` · ענית על ${fmt(st.sq)}` : ''}</span><span class="go">${icon('chev')}</span>${bar2(st)}</button>`;
     }).join('');
     return `
       <header class="subbar"><button class="icon-btn" data-act="lib" aria-label="חזרה">${icon('back')}</button><h1>${esc(LTOP_NAME[t] || '')}</h1></header>
@@ -1462,6 +1483,7 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
   SCREENS.lec = () => {
     const lid = S.ll; const l = LEC_BY.get(lid); const b = LEC_BY.get(baseLec(lid)) || l;
     const cids = visCards(lid), qids = visQs(lid);
+    const cNext = cids.length ? lecCards([lid]).length : 0, qNext = qids.length ? lecQuestions([lid]).length : 0;
     const st = lecStats([lid]);
     const sum = b.sum || [];
     const hid = uniq((LEC_C.get(baseLec(lid)) || []).concat(LEC_Q.get(baseLec(lid)) || [])).filter(isHidden).length;
@@ -1484,8 +1506,8 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
       ${hid ? `<p class="hidden-note">${hid === 1 ? 'פריט אחד מוסתר' : `${fmt(hid)} פריטים מוסתרים`} מההרצאה הזו · <button class="link-btn" data-act="unhide">להחזיר</button></p>` : ''}
       <div class="lec-opts"><button class="toggle" role="switch" data-act="l-skip" aria-checked="${!isSkipped(lid)}"><span><b>לכלול בסבבים מעורבבים</b><span>${isSkipped(lid) ? 'ההרצאה בדילוג: היא לא תיכנס לשאלות ולכרטיסיות מעורבבות או לחזרה המרווחת.' : 'אפשר לכבות אם ההרצאה לא רלוונטית למבחן שלך'}</span></span><span class="switch" aria-hidden="true"></span></button></div>
       <div class="sticky-cta lec-cta">
-        <button class="btn secondary" data-act="l-cards" ${cids.length ? '' : 'disabled'}>${icon('cards')}כרטיסיות · ${fmt(cids.length)}</button>
-        <button class="btn primary" data-act="l-qs" ${qids.length ? '' : 'disabled'}>${icon('play')}שאלות · ${fmt(qids.length)}</button>
+        <button class="btn secondary" data-act="l-cards" ${cids.length ? '' : 'disabled'}>${icon('cards')}כרטיסיות · ${fmt(cNext)}</button>
+        <button class="btn primary" data-act="l-qs" ${qids.length ? '' : 'disabled'}>${icon('play')}שאלות · ${fmt(qNext)}</button>
       </div>`;
   };
 
@@ -1500,8 +1522,8 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
     const f = isC ? m.fc : m.fq;
     const filters = isC ? [['all', 'חכם'], ['new', 'רק חדשות'], ['again', 'רק מה שלא ידעתי']] : [['smart', 'חכם'], ['new', 'רק חדשות'], ['wrong', 'רק טעויות']];
     const help = isC
-      ? { all: 'חכם: עדיפות לכרטיסיות שלא ידעת ולחדשות, עם מעט חזרה על מה שכבר ידוע.', new: 'רק כרטיסיות שעוד לא ראית.', again: 'רק כרטיסיות שבפעם האחרונה סימנת עליהן ״עוד לא״.' }[f]
-      : { smart: 'חכם: עדיפות לשאלות שעוד לא ראית ולשאלות שטעית בהן, עם מעט חזרה על מה שכבר בשליטה.', new: 'רק שאלות שעוד לא ענית עליהן.', wrong: 'רק שאלות שהתשובה האחרונה שלך בהן הייתה שגויה.' }[f];
+      ? { all: 'חכם: קודם כרטיסיות שעוד לא ראית, ובכל סבב גם כמה שלא ידעת וכאלה שהגיע זמן החזרה עליהן.', new: 'רק כרטיסיות שעוד לא ראית.', again: 'רק כרטיסיות שבפעם האחרונה סימנת עליהן ״עוד לא״.' }[f]
+      : { smart: 'חכם: קודם שאלות שעוד לא ראית, ובכל סבב גם כמה מהשאלות שטעית בהן. מה שכבר בשליטה חוזר רק כשלא נשאר חדש.', new: 'רק שאלות שעוד לא ענית עליהן.', wrong: 'רק שאלות שהתשובה האחרונה שלך בהן הייתה שגויה.' }[f];
     const skipped = LEC.filter(l => isSkipped(l.i)).length;
     return `
       <header class="subbar"><button class="icon-btn" data-act="lib" aria-label="חזרה">${icon('back')}</button><h1>${isC ? 'כרטיסיות מעורבבות' : 'שאלות מעורבבות'}</h1></header>
@@ -1641,8 +1663,8 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
       const m = DB.pref.lmix; const pool = mixPool(m); if (!pool.length) return;
       const lids = poolLids(m.t);
       const where = !m.t.length ? 'כל הנושאים' : m.t.length === 1 ? LTOP_NAME[m.t[0]] : `${m.t.length} נושאים`;
-      if (m.k === 'c') startCards({ title: `כרטיסיות · ${where}`, ids: m.fc === 'all' ? pickWeighted(pool, m.n, cardWeight) : shuffle(pool).slice(0, m.n), lids, mode: 'lmix', back: { r: 'mix' } });
-      else startSession({ mode: 'lmix', title: `שאלות · ${where}`, qids: m.fq === 'smart' ? pickWeighted(pool, m.n) : shuffle(pool).slice(0, m.n), lids, back: { r: 'mix' }, exam: !!m.ex });
+      if (m.k === 'c') startCards({ title: `כרטיסיות · ${where}`, ids: m.fc === 'all' ? coverCards(pool, m.n) : shuffle(pool).slice(0, m.n), lids, mode: 'lmix', back: { r: 'mix' } });
+      else startSession({ mode: 'lmix', title: `שאלות · ${where}`, qids: m.fq === 'smart' ? coverQs(pool, m.n) : shuffle(pool).slice(0, m.n), lids, back: { r: 'mix' }, exam: !!m.ex });
     },
     flip: () => {
       const s = S.cs; if (!s || S.route !== 'cards') return;
@@ -1676,6 +1698,11 @@ mark { background: color-mix(in srgb, var(--gold) 30%, transparent); color: inhe
     },
     'cards-back': () => goBack(S.lastCards && S.lastCards.back),
     'q-hide': el => { const q = curQ(); if (!q || !q.lx) return; DB.hide[q.i] = [1, Date.now()]; store.save(); toast('השאלה לא תופיע יותר. אפשר להחזיר אותה ממסך ההרצאה'); if (el) el.remove(); },
+    'l-new-all': () => {
+      const lids = poolLids([]); const ids = lecPool(lids).filter(id => status(id) === 'new');
+      if (!ids.length) { toast('ענית כבר על כל השאלות מההרצאות'); return; }
+      startSession({ mode: 'lnew', title: 'שאלות שעוד לא ראית מההרצאות', qids: shuffle(ids).slice(0, DB.pref.count), lids, back: { r: 'lib' } });
+    },
     'l-fresh': () => { const s = S.lastSummary; const ids = lecPool(s.lids).filter(id => status(id) === 'new'); if (!ids.length) { toast('ענית כבר על כל השאלות כאן'); return; } startSession({ mode: s.mode, title: s.title, qids: shuffle(ids).slice(0, DB.pref.count), lids: s.lids, back: s.back }); },
     'l-wrong': () => { const s = S.lastSummary; const ids = lecPool(s.lids).filter(id => status(id) === 'wrong'); if (!ids.length) { toast('אין כאן טעויות פתוחות'); return; } startSession({ mode: s.mode, title: s.title, qids: shuffle(ids).slice(0, 30), lids: s.lids, back: s.back }); }
   };
